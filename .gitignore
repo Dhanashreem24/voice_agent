@@ -45,3 +45,6 @@ session.db
 # ========================
 dist/
 build/
+
+
+dummy.txt

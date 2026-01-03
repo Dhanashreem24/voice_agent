@@ -1,87 +1,100 @@
-# ADK Voice Agent
+# Intelligent Voice Agent (IVR) with ADK
 
-This project enables a voice-based interface for your existing Google ADK (Agent Development Kit) Agent, leveraging Twilio for telephony and a local FastAPI server for processing.
-
-The system allows users to call a phone number and interact with the `RootDispatcher` and its sub-agents (`BillingAgent`, `TechSupportAgent`) using natural language.
-
----
-
-## 🏗️ Architecture
+An enterprise-grade, conversational Voice Agent built with Google's **Agent Development Kit (ADK)**, **Twilio**, and **Redis**. This system replaces traditional button-mashing IVRs with a natural, human-like AI that can handle complex queries, execute real tools, and manage state persistently.
 
 ![Architecture Diagram](image.png)
 
-**Key Improvements:**
-*   **Latency Masking**: Immediate feedback ("Please bear with me...") prevents dead air while the LLM thinks.
-*   **Session Management**: Maintains conversation history for the duration of the call.
-*   **Automatic Tool Execution**: Uses the ADK `Runner` to handle tool calls seamlessly.
+## ✨ Key Features
+
+### 🧠 Intelligent Conversational Core
+-   **Natural Language Routing**: The `RootDispatcher` understands user intent and dynamically routes calls to specialist agents (`Billing`, `TechSupport`, `Escalation`).
+-   **Dynamic Context Injection**: Automatically detects the caller's identity (e.g., Phone Number) and "bakes" it into the AI's prompts, ensuring every tool call acts on the correct user account without asking for an ID.
+
+### ⚡ Professional Voice UX
+-   **Smart Fillers**: Context-aware latency masking.
+    -   *User*: "Check my bill." -> *Agent*: "Checking your account details..."
+    -   *User*: "I want a human." -> *Agent*: "Connecting you to an agent..."
+-   **Instant Hangup**: Heuristically detects "Goodbye" or "Thanks" to terminate the call immediately, saving telephony costs and improving user satisfaction.
+-   **TTS Optimization**: Special instructions ensure numbers (like Ticket IDs) are read out clearly (digit-by-digit) and repeated.
+
+### 🛡️ Robust & Persistent Architecture
+-   **Redis Database Integration**:
+    -   **Persistence**: User profiles, balances, and network status are stored in a local Redis instance.
+    -   **Atomic Transactions**: Safe balance updates using Redis transactions.
+    -   **Ticket Management**: Escalations create persistent support tickets in the database.
+-   **Thread-Safe Agent Factory**: A `create_agent_graph()` factory ensures every incoming call gets a fresh, isolated agent instance, preventing data leaks between concurrent callers.
+-   **Resilience**: Implements retry logic for Twilio API calls and handles network interruptions gracefully.
 
 ---
 
-## 🚀 Setup & Installation
+## 🏗️ System Architecture
+
+1.  **Telephony (Twilio)**: Handles the PSTN voice stream and sends webhooks to our server.
+2.  **Server (FastAPI)**:
+    -   **`/voice`**: Greets the user.
+    -   **`/gather_speech`**: Receives STT (Speech-to-Text) and determines intent (Process or Hangup).
+    -   **`/process_speech`**: Offloads work to a background task (Async) to prevent timeouts, playing "Hold Music" (Smart Fillers) to the user.
+3.  **Brain (Google ADK)**: The `Runner` executes the Agent Graph, calling tools as needed.
+4.  **Backend (Redis)**: The Source of Truth for all data.
+
+---
+
+## 🚀 Getting Started
 
 ### 1. Prerequisites
-*   **Python 3.10+** (in `adk-env` conda environment)
-*   **Twilio Account** (with an active phone number)
-*   **ngrok** (for exposing local server to Twilio)
+-   **Python 3.10+**
+-   **Redis Server** (Running on `localhost:6379`)
+-   **Twilio Account** & **ngrok**
 
-### 2. Install Dependencies
+### 2. Installation
 ```bash
 pip install -r requirements.txt
 ```
-*(Ensure `pyaudio` and `pyttsx3` are installed for local testing)*
 
-### 3. Run the Server
-Start the FastAPI server which handles the Twilio webhooks:
-```bash
-conda run -n adk-env uvicorn server:app --port 8000 --reload
+### 3. Configuration
+Create a `.env` file:
+```ini
+GOOGLE_API_KEY=your_gemini_key
+TWILIO_ACCOUNT_SID=your_sid
+TWILIO_AUTH_TOKEN=your_token
+REDIS_URL=redis://localhost:6379/0
 ```
+
+### 4. Running the System
+
+**Step 1: Seed the Database** (Populates test user `+918275267982`)
+```bash
+python seed_db.py
+```
+
+**Step 2: Start the Server**
+```bash
+uvicorn server:app --port 8000 --reload
+```
+
+**Step 3: Expose to Twilio**
+```bash
+ngrok http 8000
+```
+*Update your Twilio Voice Webhook to: `https://<your-ngrok-url>/voice`*
 
 ---
 
-## 🧪 Testing
+## 🧪 Testing Scenarios
 
-### Option A: Local Text Tester (Recommended for Logic)
-Test the agent logic without speaking:
-```bash
-conda run -n adk-env python text_to_speech_tester.py
-```
-*   **Input**: Type "Check my balance"
-*   **Output**: Agent responds via text (and TTS)
-
-### Option B: Local Voice Tester (Virtual Twilio)
-Simulate the full voice loop using your microphone:
-```bash
-conda run -n adk-env python local_tester.py
-```
-
-### Option C: Real Phone Call (Production)
-1.  **Expose Server**:
-    ```bash
-    ngrok http 8000
-    ```
-2.  **Configure Twilio**:
-    *   Go to **Twilio Console > Phone Numbers > Manage > Active Numbers**.
-    *   Select your number -> **Voice & Fax**.
-    *   Set **"A CALL COMES IN"** to **Webhook**.
-    *   URL: `https://<your-ngrok-id>.ngrok-free.app/voice`
-    *   Method: **POST**
-    *   Save.
-3.  **Call**: Dial the number and speak!
+| Intent | What to say | Expected Behavior |
+| :--- | :--- | :--- |
+| **Billing** | "Check my balance." | Agent queries Redis and speaks the exact amount (e.g., "1245"). |
+| **Network** | "Check for outage." | Agent checks `India-West` status in Redis and confirms outage. |
+| **Escalation** | "I want to talk to a human." | Agent creates a generic Ticket in Redis and reads the Ticket ID digit-by-digit. |
+| **Hangup** | "Thanks, bye." | Call ends immediately. |
 
 ---
 
 ## 📂 Project Structure
 
-*   `server.py`: Main application handling `/voice` (Greeting), `/gather_speech` (Input), and `/process_speech` (Agent Execution).
-*   `local_tester.py`: Script to simulate Twilio locally using Microphone/Speakers.
-*   `text_to_speech_tester.py`: Script to test the agent via text input.
-*   `agents/root_agent.py`: The entry point for the ADK Agent.
-*   `prompts/system_prompts.py`: System instructions for the agents.
-
----
-
-## 🛠️ Troubleshooting
-
-*   **"Session not found"**: Ensure `USER_SESSION_MAP` logic in `server.py` is active.
-*   **Twilio 500 Error**: Check `server.log` or the terminal output for crashes.
-*   **Latency**: The "Please bear with me" message is designed to cover the 2-5s delay of the LLM.
+*   `server.py`: The FastAPI core handling the Voice lifecycle.
+*   `agents/agent_factory.py`: Dynamically creates agents with user context.
+*   `services/database.py`: Redis wrapper for data persistence.
+*   `tools/`: Real implementation of `billing`, `network`, and `escalation` tools.
+*   `prompts/`: System prompts with strict governance rules (Prompt Engineering).
