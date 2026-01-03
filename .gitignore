@@ -45,6 +45,6 @@ session.db
 # ========================
 dist/
 build/
-
+.pytest_cache/
 
 dummy.txt
